@@ -482,7 +482,7 @@ const socialLinks = [
     name: "Instagram"
   },
   {
-    url: "https://discord.gg/MRmyM2ca",
+    url: "https://discord.gg/EasCrBYW",
     icon: <FaDiscord />,
     name: "Discord"
   },
