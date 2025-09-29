@@ -534,11 +534,7 @@ const CtaSection = () => {
     setMessage("");
 
     try {
-        // In your frontend code (e.g., WaitlistForm.js)
-        const backendUrl = process.env.REACT_APP_BACKEND_URL;
-
-        // ... inside your handleSubmit function
-        const response = await fetch(`${backendUrl}/api/waitlist`, {
+      const response = await fetch("http://localhost:3001/api/waitlist", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
