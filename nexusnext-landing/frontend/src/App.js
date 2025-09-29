@@ -482,7 +482,7 @@ const socialLinks = [
     name: "Instagram"
   },
   {
-    url: "https://discord.gg/MRmyM2ca",
+    url: "https://discord.gg/EasCrBYW",
     icon: <FaDiscord />,
     name: "Discord"
   },
@@ -534,7 +534,11 @@ const CtaSection = () => {
     setMessage("");
 
     try {
-      const response = await fetch("http://localhost:3001/api/waitlist", {
+        // In your frontend code (e.g., WaitlistForm.js)
+        const backendUrl = process.env.REACT_APP_BACKEND_URL;
+
+        // ... inside your handleSubmit function
+        const response = await fetch(`${backendUrl}/api/waitlist`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
