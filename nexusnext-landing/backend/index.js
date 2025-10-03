@@ -15,7 +15,11 @@ const PORT = process.env.PORT || 3001;
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
 const app = express();
-app.use(cors());       // Allow cross-origin requests (frontend on :3000)
+app.use(cors({
+  origin: 'https://nexusnext-frontend-landing.vercel.app', // Replace with your Vercel frontend URL
+  methods: ['POST', 'GET'],
+  credentials: true
+}));       // Allow cross-origin requests (frontend on :3000)
 app.use(express.json()); // Parse JSON request bodies
 
 // Function to validate email format (simple regex)

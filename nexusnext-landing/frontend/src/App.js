@@ -1,8 +1,6 @@
-import React, { useEffect, useRef, useState, useMemo, lazy, Suspense, useCallback } from "react";
+import React, { useEffect, useRef, useState, useMemo, Suspense, useCallback } from "react";
 import { FaXTwitter, FaLinkedin, FaInstagram, FaDiscord, FaYoutube } from "react-icons/fa6";
-
-// Lazy load Three.js only when needed
-const THREE = lazy(() => import('three'));
+import * as THREE from 'three';
 
 // --- PERFORMANCE HOOKS (Optimized) ---
 const usePerformanceMonitor = () => {
@@ -58,7 +56,7 @@ const useScrollProgress = () => {
   return scrollProgress;
 };
 
-// --- OPTIMIZED 3D COMPONENTS ---
+// Quality settings helper
 const getQualitySettings = (quality) => ({
   sphereSegments: quality === "high" ? 32 : quality === "medium" ? 24 : 16,
   particleCount: quality === "high" ? 800 : quality === "medium" ? 400 : 200,
@@ -67,31 +65,44 @@ const getQualitySettings = (quality) => ({
   powerPreference: quality === "high" ? "high-performance" : "low-power"
 });
 
-// Loading fallback component
+// Loading fallback
 const SceneLoadingFallback = () => (
   <div className="absolute inset-0 w-full h-full flex items-center justify-center"
        style={{ background: "radial-gradient(circle, #0a1323 0%, #040811 100%)" }}>
-    <div className="text-white text-xl">Loading...</div>
+    <div className="text-white text-xl">Loading 3D Scene...</div>
   </div>
 );
 
-const SphereGridScene = React.memo(({ quality, scrollProgress }) => {
+// ============================================
+// FIXED SPHERE COMPONENT
+// ============================================
+const SphereGridScene = React.memo(({ quality = "medium", scrollProgress = 0 }) => {
   const mountRef = useRef(null);
+  const sceneDataRef = useRef(null);
   const [isLoaded, setIsLoaded] = useState(false);
+
   const qualitySettings = useMemo(() => getQualitySettings(quality), [quality]);
+
   useEffect(() => {
-    let mounted = true;
-    const loadScene = async () => {
+    let isMounted = true;
+    let animationId = null;
+
+    const initScene = async () => {
+      if (!mountRef.current) return;
+
       try {
         const THREE = await import('three');
-        if (!mounted) return;
-        const localMount = mountRef.current;
-        if (!localMount) return;
-        const width = localMount.clientWidth;
-        const height = localMount.clientHeight;
+        if (!isMounted || !mountRef.current) return;
+
+        const container = mountRef.current;
+        const width = container.clientWidth;
+        const height = container.clientHeight;
+
+        // Scene setup
         const scene = new THREE.Scene();
         const camera = new THREE.PerspectiveCamera(75, width / height, 0.1, 1000);
         camera.position.z = 7;
+
         const renderer = new THREE.WebGLRenderer({
           antialias: qualitySettings.antialias,
           alpha: true,
@@ -100,8 +111,16 @@ const SphereGridScene = React.memo(({ quality, scrollProgress }) => {
         renderer.setSize(width, height);
         renderer.setClearColor(0x0a1323, 1);
         renderer.setPixelRatio(Math.min(window.devicePixelRatio, quality === "high" ? 2 : 1.5));
-        localMount.appendChild(renderer.domElement);
-        const geometry = new THREE.SphereGeometry(2.8, qualitySettings.sphereSegments, qualitySettings.sphereSegments);
+        
+        container.appendChild(renderer.domElement);
+
+        // Create sphere
+        const geometry = new THREE.SphereGeometry(
+          2.8, 
+          qualitySettings.sphereSegments, 
+          qualitySettings.sphereSegments
+        );
+        
         const material = new THREE.MeshPhysicalMaterial({
           color: 0x83cafe,
           emissive: 0x0ff1ff,
@@ -112,8 +131,11 @@ const SphereGridScene = React.memo(({ quality, scrollProgress }) => {
           opacity: 0.7,
           wireframe: true,
         });
+        
         const sphere = new THREE.Mesh(geometry, material);
         scene.add(sphere);
+
+        // Add wireframe edges
         const edgesGeometry = new THREE.EdgesGeometry(geometry);
         const edgesMaterial = new THREE.LineBasicMaterial({
           color: 0x00fff9,
@@ -122,6 +144,8 @@ const SphereGridScene = React.memo(({ quality, scrollProgress }) => {
         });
         const wireframe = new THREE.LineSegments(edgesGeometry, edgesMaterial);
         sphere.add(wireframe);
+
+        // Create particles
         const particlesGeometry = new THREE.BufferGeometry();
         const positions = new Float32Array(qualitySettings.particleCount * 3);
         const colors = new Float32Array(qualitySettings.particleCount * 3);
@@ -131,9 +155,11 @@ const SphereGridScene = React.memo(({ quality, scrollProgress }) => {
           const radius = 5 + Math.random() * 13;
           const theta = Math.random() * Math.PI * 2;
           const phi = Math.acos(2 * Math.random() - 1);
+          
           positions[i3] = radius * Math.sin(phi) * Math.cos(theta);
           positions[i3 + 1] = radius * Math.sin(phi) * Math.sin(theta);
           positions[i3 + 2] = radius * Math.cos(phi);
+          
           const intensity = 0.7 + Math.random() * 0.3;
           colors[i3] = 0.1 * intensity;
           colors[i3 + 1] = 0.6 + Math.random() * 0.2;
@@ -142,6 +168,7 @@ const SphereGridScene = React.memo(({ quality, scrollProgress }) => {
 
         particlesGeometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
         particlesGeometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+        
         const particlesMaterial = new THREE.PointsMaterial({
           size: qualitySettings.particleSize,
           transparent: true,
@@ -149,234 +176,146 @@ const SphereGridScene = React.memo(({ quality, scrollProgress }) => {
           vertexColors: true,
           blending: THREE.AdditiveBlending,
         });
+        
         const particles = new THREE.Points(particlesGeometry, particlesMaterial);
         scene.add(particles);
+
+        // Lighting
         scene.add(new THREE.AmbientLight(0xffffff, 0.8));
-        let time = 0, lastTime = 0;
-        let animationFrame;
+
+        // Store refs
+        sceneDataRef.current = {
+          scene,
+          camera,
+          renderer,
+          sphere,
+          particles,
+          material,
+          edgesMaterial,
+          particlesMaterial,
+          geometry,
+          edgesGeometry,
+          particlesGeometry
+        };
+
+        // Animation loop
+        let time = 0;
+        let lastTime = performance.now();
+
         const animate = (currentTime) => {
-          if (!mounted) return;
-          animationFrame = requestAnimationFrame(animate);
+          if (!isMounted || !sceneDataRef.current) return;
+          
+          animationId = requestAnimationFrame(animate);
+
           const deltaTime = currentTime - lastTime;
-          if (deltaTime < 16) return;
+          if (deltaTime < 16) return; // ~60fps throttle
+          
           lastTime = currentTime;
           time += 0.009;
+
+          const { sphere, particles, material, edgesMaterial, particlesMaterial, renderer, scene, camera } = sceneDataRef.current;
+
+          // Rotation
           sphere.rotation.y += 0.004 + scrollProgress * 0.01;
           sphere.rotation.x += 0.002 + scrollProgress * 0.003;
           particles.rotation.y -= 0.001 + scrollProgress * 0.003;
           particles.rotation.x += Math.sin(time * 0.5) * 0.0008;
+
+          // Opacity based on scroll
           const sOpacity = Math.max(0.2, 1 - scrollProgress * 0.8);
           material.opacity = sOpacity;
           edgesMaterial.opacity = sOpacity * 0.6;
           particlesMaterial.opacity = sOpacity * 0.45;
+
+          // Pulsing scale
           const scale = 1 + Math.sin(time * 2) * 0.05 * (1 - scrollProgress * 0.5);
           sphere.scale.setScalar(scale);
+
           renderer.render(scene, camera);
         };
-        const onResize = () => {
-          if (!localMount || !mounted) return;
-          const w = localMount.clientWidth;
-          const h = localMount.clientHeight;
-          camera.aspect = w / h;
-          camera.updateProjectionMatrix();
-          renderer.setSize(w, h);
+
+        // Resize handler
+        const handleResize = () => {
+          if (!isMounted || !sceneDataRef.current || !mountRef.current) return;
+          
+          const w = mountRef.current.clientWidth;
+          const h = mountRef.current.clientHeight;
+          
+          sceneDataRef.current.camera.aspect = w / h;
+          sceneDataRef.current.camera.updateProjectionMatrix();
+          sceneDataRef.current.renderer.setSize(w, h);
         };
-        window.addEventListener("resize", onResize, { passive: true });
-        animate(0);
+
+        window.addEventListener("resize", handleResize, { passive: true });
+
+        // Start animation
+        animationId = requestAnimationFrame(animate);
         setIsLoaded(true);
+
+        // Cleanup function
         return () => {
-          mounted = false;
-          window.removeEventListener("resize", onResize);
-          cancelAnimationFrame(animationFrame);
-          geometry.dispose();
-          material.dispose();
-          edgesGeometry.dispose();
-          edgesMaterial.dispose();
-          particlesGeometry.dispose();
-          particlesMaterial.dispose();
-          renderer.dispose();
-          if (localMount && localMount.contains(renderer.domElement)) {
-            localMount.removeChild(renderer.domElement);
+          isMounted = false;
+          window.removeEventListener("resize", handleResize);
+          
+          if (animationId) {
+            cancelAnimationFrame(animationId);
+          }
+
+          if (sceneDataRef.current) {
+            const { 
+              renderer, 
+              geometry, 
+              edgesGeometry, 
+              particlesGeometry, 
+              material, 
+              edgesMaterial, 
+              particlesMaterial 
+            } = sceneDataRef.current;
+
+            // Dispose geometries
+            geometry?.dispose();
+            edgesGeometry?.dispose();
+            particlesGeometry?.dispose();
+
+            // Dispose materials
+            material?.dispose();
+            edgesMaterial?.dispose();
+            particlesMaterial?.dispose();
+
+            // Dispose renderer
+            if (renderer) {
+              renderer.dispose();
+              if (container && container.contains(renderer.domElement)) {
+                container.removeChild(renderer.domElement);
+              }
+            }
+
+            sceneDataRef.current = null;
           }
         };
       } catch (error) {
-        console.error('Failed to load 3D scene:', error);
-        setIsLoaded(true); // Show fallback
+        console.error('Sphere scene error:', error);
+        setIsLoaded(true);
       }
     };
-    loadScene();
+
+    const cleanup = initScene();
+
     return () => {
-      mounted = false;
+      isMounted = false;
+      if (cleanup && typeof cleanup.then === 'function') {
+        cleanup.then(cleanupFn => cleanupFn && cleanupFn());
+      }
     };
   }, [quality, qualitySettings, scrollProgress]);
+
   return (
     <div
       ref={mountRef}
       className="absolute inset-0 w-full h-full"
-      style={{ background: "radial-gradient(circle, #0a1323 0%, #040811 100%)" }}
-    >
-      {!isLoaded && <SceneLoadingFallback />}
-    </div>
-  );
-});
-
-// DNA Scene
-const DnaSceneComponent = React.memo(({ scrollProgress }) => {
-  const mountRef = useRef(null);
-  const [isLoaded, setIsLoaded] = useState(false);
-  useEffect(() => {
-    let mounted = true;
-    const loadDnaScene = async () => {
-      try {
-        const THREE = await import('three');
-        if (!mounted) return;
-        const mount = mountRef.current;
-        if (!mount) return;
-        const width = mount.clientWidth;
-        const height = mount.clientHeight;
-        const scene = new THREE.Scene();
-        const camera = new THREE.PerspectiveCamera(65, width / height, 0.1, 1000);
-        camera.position.z = 8;
-        const renderer = new THREE.WebGLRenderer({
-          alpha: true,
-          antialias: false,
-          powerPreference: "default"
-        });
-        renderer.setSize(width, height);
-        renderer.setClearColor(0x0a1323, 0);
-        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
-        mount.appendChild(renderer.domElement);
-        const helixGroup = new THREE.Group();
-        const segments = 120;
-        const radius = 2.6;
-        const strand1Points = [];
-        const strand2Points = [];
-        for (let i = 0; i < segments; i++) {
-          const t = i / (segments - 1);
-          const angle = t * Math.PI * 10;
-          const y = (t - 0.5) * 14;
-          strand1Points.push(new THREE.Vector3(Math.cos(angle) * radius, y, Math.sin(angle) * radius));
-          strand2Points.push(new THREE.Vector3(Math.cos(angle + Math.PI) * radius, y, Math.sin(angle + Math.PI) * radius));
-        }
-        const curve1 = new THREE.CatmullRomCurve3(strand1Points);
-        const curve2 = new THREE.CatmullRomCurve3(strand2Points);
-        const geo1 = new THREE.TubeGeometry(curve1, segments, 0.08, 6, false);
-        const geo2 = new THREE.TubeGeometry(curve2, segments, 0.08, 6, false);
-        const mat1 = new THREE.MeshBasicMaterial({
-          color: 0x2fd3f7,
-          transparent: true,
-          opacity: 0.7 + 0.2 * scrollProgress
-        });
-        const mat2 = new THREE.MeshBasicMaterial({
-          color: 0xc084fc,
-          transparent: true,
-          opacity: 0.65 + 0.2 * scrollProgress
-        });
-        const strand1 = new THREE.Mesh(geo1, mat1);
-        const strand2 = new THREE.Mesh(geo2, mat2);
-        helixGroup.add(strand1, strand2);
-        for (let i = 0; i < segments; i += 20) {
-          const t = i / (segments - 1);
-          const angle = t * Math.PI * 10;
-          const y = (t - 0.5) * 14;
-          const rungGeo = new THREE.CylinderGeometry(0.03, 0.03, radius * 2, 4);
-          const rungMat = new THREE.MeshBasicMaterial({
-            color: 0xffe084,
-            transparent: true,
-            opacity: 0.5 + 0.3 * scrollProgress,
-          });
-          const rung = new THREE.Mesh(rungGeo, rungMat);
-          rung.position.y = y;
-          rung.rotation.y = angle;
-          rung.rotation.z = Math.PI / 2;
-          helixGroup.add(rung);
-        }
-        scene.add(helixGroup);
-        const particleCount = 150;
-        const particlesGeometry = new THREE.BufferGeometry();
-        const positions = new Float32Array(particleCount * 3);
-        const colors = new Float32Array(particleCount * 3);
-        for (let i = 0; i < particleCount; i++) {
-          const i3 = i * 3;
-          const rad = 6.5 + Math.random() * 4;
-          const phi = Math.random() * Math.PI;
-          const theta = Math.random() * 2 * Math.PI;
-          positions[i3] = Math.sin(phi) * Math.cos(theta) * rad;
-          positions[i3 + 1] = (Math.random() - 0.5) * 14;
-          positions[i3 + 2] = Math.sin(phi) * Math.sin(theta) * rad;
-          colors[i3 + 0] = 0.3 + 0.7 * Math.random();
-          colors[i3 + 1] = 0.7 + 0.3 * Math.random();
-          colors[i3 + 2] = 1.0;
-        }
-        particlesGeometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-        particlesGeometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
-        const particlesMaterial = new THREE.PointsMaterial({
-          size: 0.11,
-          transparent: true,
-          opacity: 0.13 + 0.5 * scrollProgress,
-          vertexColors: true,
-          blending: THREE.AdditiveBlending,
-        });
-        const particles = new THREE.Points(particlesGeometry, particlesMaterial);
-        scene.add(particles);
-        scene.add(new THREE.AmbientLight(0xffffff, 0.54));
-        let time = 0;
-        let animationFrame;
-        const animate = () => {
-          if (!mounted) return;
-          animationFrame = requestAnimationFrame(animate);
-          time += 0.011;
-          helixGroup.rotation.y = time * 0.35 + 0.033 * scrollProgress;
-          helixGroup.rotation.x = 0.32 * Math.sin(time * 0.32 + 0.15 * scrollProgress);
-          const pulse = 1.0 + 0.08 * Math.sin(time * 2.5);
-          helixGroup.scale.set(pulse, pulse, pulse);
-          particles.rotation.y += 0.003;
-          mat1.opacity = 0.65 + 0.31 * scrollProgress;
-          mat2.opacity = 0.62 + 0.33 * scrollProgress;
-          renderer.render(scene, camera);
-        };
-        const onResize = () => {
-          if (!mount || !mounted) return;
-          const w = mount.clientWidth;
-          const h = mount.clientHeight;
-          camera.aspect = w / h;
-          camera.updateProjectionMatrix();
-          renderer.setSize(w, h);
-        };
-        window.addEventListener("resize", onResize, { passive: true });
-        animate();
-        setIsLoaded(true);
-        return () => {
-          mounted = false;
-          window.removeEventListener("resize", onResize);
-          cancelAnimationFrame(animationFrame);
-          geo1.dispose();
-          geo2.dispose();
-          mat1.dispose();
-          mat2.dispose();
-          particlesGeometry.dispose();
-          particlesMaterial.dispose();
-          renderer.dispose();
-          if (mount.contains(renderer.domElement)) mount.removeChild(renderer.domElement);
-        };
-      } catch (error) {
-        console.error('Failed to load DNA scene:', error);
-        setIsLoaded(true);
-      }
-    };
-    loadDnaScene();
-    return () => {
-      mounted = false;
-    };
-  }, [scrollProgress]);
-  return (
-    <div
-      ref={mountRef}
-      style={{
-        width: "100%",
-        height: "90vh",
-        background: "radial-gradient(circle at center, #181b2e 0%, #0a1323 100%)",
-        position: "relative",
+      style={{ 
+        background: "radial-gradient(circle, #0a1323 0%, #040811 100%)",
+        zIndex: 1
       }}
     >
       {!isLoaded && <SceneLoadingFallback />}
@@ -384,7 +323,321 @@ const DnaSceneComponent = React.memo(({ scrollProgress }) => {
   );
 });
 
-const AnimatedText = React.memo(({ children, className = "", delay = 0 }) => {
+// ============================================
+// FIXED DNA COMPONENT
+// ============================================
+const DnaSceneComponent = React.memo(({ scrollProgress = 0 }) => {
+  const mountRef = useRef(null);
+  const sceneDataRef = useRef(null);
+  const [isLoaded, setIsLoaded] = useState(false);
+
+  useEffect(() => {
+    let isMounted = true;
+    let animationId = null;
+
+    const initScene = async () => {
+      if (!mountRef.current) return;
+
+      try {
+        const THREE = await import("three");
+        if (!isMounted || !mountRef.current) return;
+
+        const container = mountRef.current;
+        const width = container.clientWidth;
+        const height = 600;
+
+        // Scene setup
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(65, width / height, 0.1, 1000);
+        camera.position.z = 8;
+
+        const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
+        renderer.setSize(width, height);
+        renderer.setClearColor(0x0a1323, 0);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+        
+        container.appendChild(renderer.domElement);
+
+        // DNA helix parameters
+        const helixGroup = new THREE.Group();
+        const segments = 120;
+        const radius = 2.6;
+        const verticalHeight = 7.6;
+
+        // Create strand points
+        const strand1Points = [];
+        const strand2Points = [];
+        
+        for (let i = 0; i < segments; i++) {
+          const t = i / (segments - 1);
+          const angle = t * Math.PI * 10;
+          const y = (t - 0.5) * verticalHeight;
+          
+          strand1Points.push(
+            new THREE.Vector3(
+              Math.cos(angle) * radius, 
+              y, 
+              Math.sin(angle) * radius
+            )
+          );
+          
+          strand2Points.push(
+            new THREE.Vector3(
+              Math.cos(angle + Math.PI) * radius, 
+              y, 
+              Math.sin(angle + Math.PI) * radius
+            )
+          );
+        }
+
+        // Create curves and tubes
+        const curve1 = new THREE.CatmullRomCurve3(strand1Points);
+        const curve2 = new THREE.CatmullRomCurve3(strand2Points);
+        
+        const geo1 = new THREE.TubeGeometry(curve1, segments, 0.08, 6, false);
+        const geo2 = new THREE.TubeGeometry(curve2, segments, 0.08, 6, false);
+
+        const mat1 = new THREE.MeshBasicMaterial({
+          color: 0x2fd3f7,
+          transparent: true,
+          opacity: 0.7
+        });
+        
+        const mat2 = new THREE.MeshBasicMaterial({
+          color: 0xc084fc,
+          transparent: true,
+          opacity: 0.65
+        });
+
+        const strand1 = new THREE.Mesh(geo1, mat1);
+        const strand2 = new THREE.Mesh(geo2, mat2);
+        helixGroup.add(strand1, strand2);
+
+        // Add rungs
+        const rungs = [];
+        for (let i = 0; i < segments; i += 20) {
+          const t = i / (segments - 1);
+          const angle = t * Math.PI * 10;
+          const y = (t - 0.5) * verticalHeight;
+          
+          const rungGeo = new THREE.CylinderGeometry(0.03, 0.03, radius * 2, 4);
+          const rungMat = new THREE.MeshBasicMaterial({
+            color: 0xffe084,
+            transparent: true,
+            opacity: 0.5,
+          });
+          
+          const rung = new THREE.Mesh(rungGeo, rungMat);
+          rung.position.y = y;
+          rung.rotation.y = angle;
+          rung.rotation.z = Math.PI / 2;
+          
+          helixGroup.add(rung);
+          rungs.push({ mesh: rung, material: rungMat, geometry: rungGeo });
+        }
+
+        scene.add(helixGroup);
+
+        // Create particles
+        const particleCount = 150;
+        const particlesGeometry = new THREE.BufferGeometry();
+        const positions = new Float32Array(particleCount * 3);
+        const colors = new Float32Array(particleCount * 3);
+
+        for (let i = 0; i < particleCount; i++) {
+          const i3 = i * 3;
+          const rad = 6.5 + Math.random() * 4;
+          const phi = Math.random() * Math.PI;
+          const theta = Math.random() * 2 * Math.PI;
+          
+          positions[i3] = Math.sin(phi) * Math.cos(theta) * rad;
+          positions[i3 + 1] = (Math.random() - 0.5) * verticalHeight;
+          positions[i3 + 2] = Math.sin(phi) * Math.sin(theta) * rad;
+          
+          colors[i3 + 0] = 0.3 + 0.7 * Math.random();
+          colors[i3 + 1] = 0.7 + 0.3 * Math.random();
+          colors[i3 + 2] = 1.0;
+        }
+
+        particlesGeometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+        particlesGeometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+
+        const particlesMaterial = new THREE.PointsMaterial({
+          size: 0.11,
+          transparent: true,
+          opacity: 0.4,
+          vertexColors: true,
+          blending: THREE.AdditiveBlending,
+        });
+
+        const particles = new THREE.Points(particlesGeometry, particlesMaterial);
+        scene.add(particles);
+        
+        // Lighting
+        scene.add(new THREE.AmbientLight(0xffffff, 0.54));
+
+        // Store refs
+        sceneDataRef.current = {
+          scene,
+          camera,
+          renderer,
+          helixGroup,
+          particles,
+          mat1,
+          mat2,
+          particlesMaterial,
+          geo1,
+          geo2,
+          particlesGeometry,
+          rungs
+        };
+
+        // Animation loop
+        let time = 0;
+        let lastScrollProgress = scrollProgress;
+
+        const animate = () => {
+          if (!isMounted || !sceneDataRef.current) return;
+          
+          animationId = requestAnimationFrame(animate);
+
+          time += 0.011;
+
+          const { 
+            helixGroup, 
+            particles, 
+            mat1, 
+            mat2, 
+            particlesMaterial,
+            renderer,
+            scene,
+            camera
+          } = sceneDataRef.current;
+
+          // Rotate helix
+          helixGroup.rotation.y = time * 0.35;
+          helixGroup.rotation.x = 0.32 * Math.sin(time * 0.32);
+
+          // Pulsing effect
+          const pulse = 1.0 + 0.08 * Math.sin(time * 2.5);
+          helixGroup.scale.set(pulse, pulse, pulse);
+
+          // Rotate particles
+          particles.rotation.y += 0.003;
+
+          // Update opacity based on scroll
+          if (Math.abs(lastScrollProgress - scrollProgress) > 0.01) {
+            mat1.opacity = 0.65 + 0.25 * scrollProgress;
+            mat2.opacity = 0.62 + 0.28 * scrollProgress;
+            particlesMaterial.opacity = 0.3 + 0.4 * scrollProgress;
+            lastScrollProgress = scrollProgress;
+          }
+
+          renderer.render(scene, camera);
+        };
+
+        // Resize handler
+        const handleResize = () => {
+          if (!isMounted || !sceneDataRef.current || !mountRef.current) return;
+          
+          const w = mountRef.current.clientWidth;
+          const h = mountRef.current.clientHeight;
+          
+          sceneDataRef.current.camera.aspect = w / h;
+          sceneDataRef.current.camera.updateProjectionMatrix();
+          sceneDataRef.current.renderer.setSize(w, h);
+        };
+
+        window.addEventListener("resize", handleResize, { passive: true });
+
+        // Start animation
+        animationId = requestAnimationFrame(animate);
+        setIsLoaded(true);
+
+        // Cleanup function
+        return () => {
+          isMounted = false;
+          window.removeEventListener("resize", handleResize);
+          
+          if (animationId) {
+            cancelAnimationFrame(animationId);
+          }
+
+          if (sceneDataRef.current) {
+            const { 
+              renderer, 
+              geo1, 
+              geo2, 
+              particlesGeometry,
+              mat1, 
+              mat2, 
+              particlesMaterial,
+              rungs
+            } = sceneDataRef.current;
+
+            // Dispose geometries
+            geo1?.dispose();
+            geo2?.dispose();
+            particlesGeometry?.dispose();
+
+            // Dispose materials
+            mat1?.dispose();
+            mat2?.dispose();
+            particlesMaterial?.dispose();
+            
+            // Dispose rung materials and geometries
+            rungs?.forEach(rung => {
+              rung.geometry?.dispose();
+              rung.material?.dispose();
+            });
+
+            // Dispose renderer
+            if (renderer) {
+              renderer.dispose();
+              if (container && container.contains(renderer.domElement)) {
+                container.removeChild(renderer.domElement);
+              }
+            }
+
+            sceneDataRef.current = null;
+          }
+        };
+      } catch (error) {
+        console.error("DNA scene error:", error);
+        setIsLoaded(true);
+      }
+    };
+
+    // THIS WAS MISSING - Call initScene and handle cleanup
+    const cleanup = initScene();
+
+    return () => {
+      isMounted = false;
+      if (cleanup && typeof cleanup.then === 'function') {
+        cleanup.then(cleanupFn => cleanupFn && cleanupFn());
+      }
+    };
+  }, [scrollProgress]);
+
+  return (
+    <div
+      ref={mountRef}
+      style={{
+        width: "100%",
+        height: "600px",
+        minHeight: "600px",
+        maxHeight: "90vh",
+        background: "radial-gradient(circle at center, #181b2e 0%, #0a1323 100%)",
+        position: "relative",
+        overflow: "hidden",
+      }}
+    >
+      {!isLoaded && <SceneLoadingFallback />}
+    </div>
+  );
+});
+
+  const AnimatedText = React.memo(({ children, className = "", delay = 0 }) => {
   const [isVisible, setVisible] = useState(false);
   const elementRef = useRef(null);
   useEffect(() => {
@@ -526,36 +779,38 @@ const CtaSection = () => {
     return /\S+@\S+\.\S+/.test(email);
   };
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    if (!email || !isEmail(email) || isSubmitting) return;
+const handleSubmit = async (e) => {
+  e.preventDefault();
+  if (!email || !isEmail(email) || isSubmitting) return;
 
-    setIsSubmitting(true);
-    setMessage("");
+  setIsSubmitting(true);
+  setMessage("");
 
-    try {
-      const response = await fetch("http://localhost:3001/api/waitlist", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ email }),
-      });
+  try {
+    const backendUrl = process.env.REACT_APP_BACKEND_URL || 'https://nexusnext-landing.onrender.com';
 
-      const data = await response.json();
+    const response = await fetch(`${backendUrl}/api/waitlist`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ email }),
+    });
 
-      if (response.ok) {
-        setMessage("Thanks! You've joined the waitlist.");
-        setEmail("");
-      } else {
-        setMessage(data.error || "Failed to submit. Please try again.");
-      }
-    } catch (error) {
-      setMessage("Network error. Please try again later.");
-    } finally {
-      setIsSubmitting(false);
+    const data = await response.json();
+
+    if (response.ok) {
+      setMessage("Thanks! You've joined the waitlist.");
+      setEmail("");
+    } else {
+      setMessage(data.error || "Failed to submit. Please try again.");
     }
-  };
+  } catch (error) {
+    setMessage("Network error. Please try again later.");
+  } finally {
+    setIsSubmitting(false);
+  }
+};
 
   return (
     <section className="bg-[#151a31] text-center py-20 px-4 select-none">
